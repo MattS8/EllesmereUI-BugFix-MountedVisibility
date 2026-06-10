@@ -9488,17 +9488,10 @@ local DRUID_MOUNT_FORM_SPELLS = {
     210053, -- Mount Form (variant)
 }
 
--- Runtime check: returns true if the element should be HIDDEN by visibility options.
--- `opts` is the settings table containing the vis option booleans.
-function EllesmereUI.IsPlayerMountedLike()
-    -- Fast path for regular mounts.
-    if IsMounted and IsMounted() then return true end
-
-    -- Only druids have mount-like shapeshift forms.
+-- Mount-like shapeshift forms that [mounted] does not match (druid only).
+-- Regular mounts are handled by the secure [mounted] macro conditional.
+function EllesmereUI.IsPlayerMountedLikeNonMacro()
     if _playerClass ~= "DRUID" then return false end
-
-    -- Aura check: the Travel Form buff is present on the player whenever
-    -- the druid is shifted, regardless of ground/swim/fly subform.
     if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
         for i = 1, #DRUID_MOUNT_FORM_SPELLS do
             if C_UnitAuras.GetPlayerAuraBySpellID(DRUID_MOUNT_FORM_SPELLS[i]) then
@@ -9506,8 +9499,13 @@ function EllesmereUI.IsPlayerMountedLike()
             end
         end
     end
-
     return false
+end
+
+-- Runtime check: returns true if the element should be HIDDEN by visibility options.
+function EllesmereUI.IsPlayerMountedLike()
+    if IsMounted and IsMounted() then return true end
+    return EllesmereUI.IsPlayerMountedLikeNonMacro()
 end
 
 -- Non-macro visibility subset: the options that CAN'T be expressed in a
@@ -9515,6 +9513,7 @@ end
 -- action bar frames that delegate the macro-expressible options
 -- (target/combat/group) to their state-visibility driver and only need
 -- Lua handling for these three.
+-- `opts` is the settings table containing the vis option booleans.
 function EllesmereUI.CheckVisibilityOptionsNonMacro(opts)
     if not opts then return false end
 
@@ -9540,9 +9539,10 @@ function EllesmereUI.CheckVisibilityOptionsNonMacro(opts)
         end
     end
 
-    -- Hide when Mounted (includes druid travel/flight/aquatic forms)
+    -- Hide when Mounted: druid travel/flight/aquatic forms only.
+    -- Regular mounts use the secure [mounted] macro conditional.
     if opts.visHideMounted then
-        if EllesmereUI.IsPlayerMountedLike and EllesmereUI.IsPlayerMountedLike() then return true end
+        if EllesmereUI.IsPlayerMountedLikeNonMacro and EllesmereUI.IsPlayerMountedLikeNonMacro() then return true end
     end
 
     return false

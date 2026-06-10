@@ -5721,6 +5721,35 @@ function EAB:ApplyClickThroughForBar(barKey)
     end
 end
 
+function EAB:TrackCombatMountedDismountRestore()
+    if not InCombatLockdown() then return end
+    if EllesmereUI.IsPlayerMountedLike and EllesmereUI.IsPlayerMountedLike() then return end
+
+    local inRaid = IsInRaid and IsInRaid() or false
+    local inGroup = IsInGroup and IsInGroup() or false
+    local state = {
+        inCombat = true,
+        inRaid = inRaid,
+        inParty = inGroup and not inRaid,
+    }
+
+    for _, info in ipairs(ALL_BARS) do
+        local s = self.db.profile.bars[info.key]
+        if s and s.visHideMounted and not s.alwaysHidden and s.enabled ~= false then
+            local vis = s.barVisibility or "always"
+            if vis ~= "never"
+                and EllesmereUI.CheckVisibilityMode
+                and EllesmereUI.CheckVisibilityMode(vis, state)
+            then
+                local frame = barFrames[info.key]
+                if frame then
+                    frame._eabMountedVisPendingRestore = true
+                end
+            end
+        end
+    end
+end
+
 function EAB:UpdateHousingVisibility()
     -- Defer to next frame to avoid taint from secure execution paths
     -- (e.g. CameraOrSelectOrMoveStop triggering PLAYER_MOUNT_DISPLAY_CHANGED)
@@ -5761,7 +5790,7 @@ function EAB:UpdateHousingVisibility()
                 end
             end
             if s.visHideMounted then
-                if EllesmereUI and EllesmereUI.IsPlayerMountedLike and EllesmereUI.IsPlayerMountedLike() then
+                if EllesmereUI and EllesmereUI.IsPlayerMountedLikeNonMacro and EllesmereUI.IsPlayerMountedLikeNonMacro() then
                     return true
                 end
             end
@@ -8389,9 +8418,11 @@ function EAB:FinishSetup()
 
     -- Visibility option events: mounted, target, group changes
     self:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED", function()
+        self:TrackCombatMountedDismountRestore()
         self:UpdateHousingVisibility()
     end)
     self:RegisterEvent("UPDATE_SHAPESHIFT_FORM", function()
+        self:TrackCombatMountedDismountRestore()
         self:UpdateHousingVisibility()
     end)
     -- Immediate soft-target override: when the only "target" is a soft-
@@ -8441,27 +8472,42 @@ function EAB:FinishSetup()
     self:RegisterEvent("GROUP_ROSTER_UPDATE", function()
         self:UpdateHousingVisibility()
     end)
-    -- Combat exit: synchronously restore all visHideNoTarget bar state drivers.
-    -- During combat, ImmediateSoftTargetCheck and UpdateHousingVisibility are
+    -- Combat exit: synchronously restore visHideNoTarget and visHideMounted bar
+    -- state drivers. During combat, ImmediateSoftTargetCheck,
+    -- TrackCombatMountedDismountRestore, and UpdateHousingVisibility are
     -- blocked by InCombatLockdown. If a bar's driver was overridden to "hide"
-    -- (soft-target override) before combat started, it stays stuck the entire
-    -- fight. The shared visibility dispatcher uses a double-deferred path that
-    -- can miss rapid combat re-entry. This handler runs at the exact frame
-    -- lockdown lifts, with no deferral, guaranteeing restoration.
+    -- (soft-target or druid-form mounted override) it stays stuck the entire
+    -- fight. This handler runs at the exact frame lockdown lifts, with no
+    -- deferral, guaranteeing restoration.
     do
         local regenFrame = CreateFrame("Frame")
         regenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
         regenFrame:SetScript("OnEvent", function()
             for _, info in ipairs(ALL_BARS) do
                 local s = self.db.profile.bars[info.key]
-                if s and s.visHideNoTarget then
-                    local frame = barFrames[info.key]
-                    if frame then
+                local frame = barFrames[info.key]
+                if s and frame then
+                    local restore = false
+                    if s.visHideNoTarget then
+                        restore = true
+                    elseif s.visHideMounted then
+                        if frame._eabMountedVisPendingRestore then
+                            restore = true
+                        elseif frame._eabLastVisStr == "hide"
+                            and EllesmereUI.IsPlayerMountedLikeNonMacro
+                            and not EllesmereUI.IsPlayerMountedLikeNonMacro()
+                            and not (EllesmereUI.CheckVisibilityOptionsNonMacro and EllesmereUI.CheckVisibilityOptionsNonMacro(s))
+                        then
+                            restore = true
+                        end
+                    end
+                    if restore then
                         local newStr = BuildVisibilityString(info, s)
                         if frame._eabLastVisStr ~= newStr then
                             frame._eabLastVisStr = newStr
                             RegisterAttributeDriver(frame, "state-visibility", newStr)
                         end
+                        frame._eabMountedVisPendingRestore = nil
                     end
                 end
             end
